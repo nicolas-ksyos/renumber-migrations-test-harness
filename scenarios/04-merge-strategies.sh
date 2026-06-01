@@ -45,9 +45,9 @@ run_hook() {
   local exit_code=0
   local output
   output=$(cd "$REPO_DIR" && \
-    npx --prefix "$KEEP_ORDER_ROOT" ts-node \
-      --project "$KEEP_ORDER_ROOT/src/scripts/tsconfig.json" \
-      "$KEEP_ORDER_ROOT/src/scripts/renumberMigrations.ts" 2>&1) || exit_code=$?
+    npx --prefix "$CS_REPO" ts-node \
+      --project "$CS_REPO/src/scripts/tsconfig.json" \
+      "$CS_REPO/src/scripts/renumberMigrations.ts" 2>&1) || exit_code=$?
   echo "$output"
   return $exit_code
 }

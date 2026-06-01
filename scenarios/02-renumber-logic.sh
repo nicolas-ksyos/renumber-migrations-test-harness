@@ -23,9 +23,9 @@ run_hook() {
   local exit_code=0
   local output
   output=$(cd "$REPO_DIR" && \
-    npx --prefix "$KEEP_ORDER_ROOT" ts-node \
-      --project "$KEEP_ORDER_ROOT/src/scripts/tsconfig.json" \
-      "$KEEP_ORDER_ROOT/src/scripts/renumberMigrations.ts" 2>&1) || exit_code=$?
+    npx --prefix "$CS_REPO" ts-node \
+      --project "$CS_REPO/src/scripts/tsconfig.json" \
+      "$CS_REPO/src/scripts/renumberMigrations.ts" 2>&1) || exit_code=$?
   echo "$output"
   return $exit_code
 }
@@ -50,7 +50,9 @@ scenario_2_1() {
   add_migration "0000-foo.ts"
 
   checkout_branch "develop"
-  merge_branch "feature/CS-1234-foo"
+  echo "build" > .build-marker && git add .build-marker && git commit -m "ci: dummy build marker"
+  checkout_branch "feature/CS-1234-foo"
+  merge_branch "develop"
 
   local exit_code=0
   local output
@@ -80,12 +82,14 @@ scenario_2_2() {
   make_branch "feature/CS-1234-multi"
 
   # Commit three migrations with explicit, ascending timestamps.
-  add_migration "0000-c.ts" "export {};" "2026-01-01T10:00:00"
-  add_migration "0000-a.ts" "export {};" "2026-01-01T10:10:00"
-  add_migration "0000-b.ts" "export {};" "2026-01-01T10:20:00"
+  add_migration "0000-c.ts" "export {};" "@1000000000"
+  add_migration "0000-a.ts" "export {};" "@1000000600"   # +10 min
+  add_migration "0000-b.ts" "export {};" "@1000001200"   # +20 min
 
   checkout_branch "develop"
-  merge_branch "feature/CS-1234-multi"
+  echo "build" > .build-marker && git add .build-marker && git commit -m "ci: dummy build marker"
+  checkout_branch "feature/CS-1234-multi"
+  merge_branch "develop"
 
   local exit_code=0
   local output
@@ -124,14 +128,22 @@ scenario_2_3() {
   advance_develop 99
 
   make_branch "feature/CS-1234-behind"
-  # Numbered as if develop were still at 0100, but develop will move on
-  add_migration "0101-bar.ts"
 
   checkout_branch "develop"
   # develop advances 5 more → top is now 0105-advance.ts
-  advance_develop 5
+  # Add 5 develop migrations with explicit, ascending timestamps
+  add_migration "0101-develop-ahead-1.ts" "export {};" "@2000000000"
+  add_migration "0102-develop-ahead-2.ts" "export {};" "@2000000060"
+  add_migration "0103-develop-ahead-3.ts" "export {};" "@2000000120"
+  add_migration "0104-develop-ahead-4.ts" "export {};" "@2000000180"
+  add_migration "0105-develop-ahead-5.ts" "export {};" "@2000000240"
 
-  merge_branch "feature/CS-1234-behind"
+  # Return to feature and add the migration — bar gets a timestamp clearly
+  # AFTER all advance files so it sorts last and lands at slot 0106.
+  checkout_branch "feature/CS-1234-behind"
+  add_migration "0000-bar.ts" "export {};" "@2000001000"
+
+  merge_branch "develop"
 
   local exit_code=0
   local output
@@ -139,7 +151,7 @@ scenario_2_3() {
 
   assert_exit_code "2.3 exits 0" 0 "$exit_code"
   assert_file_renamed "2.3 renumbered to 0106-bar.ts" \
-    "$REPO_DIR/src/backend/migrations/0101-bar.ts" \
+    "$REPO_DIR/src/backend/migrations/0000-bar.ts" \
     "$REPO_DIR/src/backend/migrations/0106-bar.ts"
 }
 
@@ -205,7 +217,9 @@ scenario_2_5() {
   git -C "$REPO_DIR" commit -m "add README.md"
 
   checkout_branch "develop"
-  merge_branch "feature/CS-1234-mixed"
+  echo "build" > "$REPO_DIR/.build-marker" && git -C "$REPO_DIR" add .build-marker && git -C "$REPO_DIR" commit -m "ci: dummy build marker"
+  checkout_branch "feature/CS-1234-mixed"
+  merge_branch "develop"
 
   local exit_code=0
   local output

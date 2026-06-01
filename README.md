@@ -1,7 +1,7 @@
 # renumber-migrations — Test Harness
 
 A standalone bash test harness for the `renumberMigrations.ts` post-merge hook in the
-[keep-order / ClientSafeWeb](https://github.com/ClientSafe/keep-order) repository. It
+[ClientSafeWeb](https://github.com/ClientSafe/keep-order) repository. It
 spins up isolated temporary git repositories per scenario, invokes the hook via
 `ts-node`, and asserts on exit codes, file presence, and stdout — with no external test
 framework required.
@@ -14,10 +14,25 @@ framework required.
 |---|---|
 | `git` | Any version ≥ 2.x; ≥ 2.28 recommended for `git init -b` |
 | `ts-node` (global) **or** `npx` | `run-tests.sh` tries the global binary first, then falls back to `npx` |
-| `keep-order` repo cloned as parent directory | `../src/scripts/renumberMigrations.ts` must resolve from `renumber-migrations/` |
+| `CS_REPO` set to your ClientSafeWeb clone | Required — see Setup below |
 | macOS (darwin) | Tested platform; Linux likely works but is untested |
 
-The hook script is resolved at runtime via `KEEP_ORDER_ROOT` (the parent of `renumber-migrations/`).
+---
+
+## Setup
+
+Point the harness at your ClientSafeWeb clone before running:
+
+```bash
+# Option A — env var (add to your shell profile for convenience)
+export CS_REPO=/path/to/ClientSafeWeb
+
+# Option B — inline per run
+CS_REPO=/path/to/ClientSafeWeb ./run-tests.sh
+
+# Option C — flag
+./run-tests.sh --repo=/path/to/ClientSafeWeb
+```
 
 ---
 
@@ -25,7 +40,7 @@ The hook script is resolved at runtime via `KEEP_ORDER_ROOT` (the parent of `ren
 
 ```bash
 # From the renumber-migrations/ directory:
-./run-tests.sh
+./run-tests.sh --repo=/path/to/ClientSafeWeb
 ```
 
 Expected output (abridged):
@@ -33,7 +48,7 @@ Expected output (abridged):
 ```
 ══════════════════════════════════════════════════
   renumberMigrations.ts — test harness
-  Hook: /path/to/keep-order/src/scripts/renumberMigrations.ts
+  Hook: /path/to/ClientSafeWeb/src/scripts/renumberMigrations.ts
 ══════════════════════════════════════════════════
 
 ══════════════════════════════════════
@@ -48,7 +63,7 @@ Expected output (abridged):
 ...
 
 ══════════════════════════════════════
-  Results: 42 passed, 0 failed
+  Results: 52 passed, 0 failed
 ══════════════════════════════════════
 ```
 
@@ -79,7 +94,7 @@ renumber-migrations/
 | `setup_repo` | Creates a fresh temp git repo on `develop` with `0001-initial.ts`; sets `REPO_DIR` |
 | `make_branch <name>` | Creates and checks out a new branch |
 | `checkout_branch <name>` | Checks out an existing branch |
-| `add_migration <file> [content] [date]` | Writes a migration file, stages it, and commits |
+| `add_migration <file> [content] [date]` | Writes a migration file, stages it, and commits. `date` must be a Unix epoch in `@<seconds>` format (e.g. `@1000000000`) — ISO-8601 strings without a timezone are silently rejected by git and fall back to the real clock, producing unreliable timestamps for sort tests |
 | `advance_develop <n>` | Adds `n` sequential migration commits to the current branch |
 | `merge_branch <name>` | Merges `<name>` into the current branch (`--no-ff`) |
 | `teardown_repo` | Removes `REPO_DIR`; called via `trap` in each scenario |
@@ -118,17 +133,9 @@ renumber-migrations/
 
 ---
 
-## Relationship to keep-order
+## Relationship to ClientSafeWeb
 
-This repo is a **sibling** of `keep-order/` and is gitignored from it. Clone it separately and place it next to `keep-order/`:
-
-```
-parent/
-  keep-order/          ← ClientSafeWeb monorepo
-  renumber-migrations/ ← this test harness
-```
-
-The hook is accessed via the relative path `../src/scripts/renumberMigrations.ts` (resolved at runtime as `$KEEP_ORDER_ROOT/src/scripts/renumberMigrations.ts`).
+This is a fully standalone repository at `~/repos/renumber-migrations/`. It has no filesystem dependency on the ClientSafeWeb clone — the connection is purely through the `CS_REPO` environment variable, which points to your local ClientSafeWeb checkout. Clone each repo wherever suits you; they do not need to be siblings.
 
 ---
 
@@ -148,7 +155,6 @@ The hook is accessed via the relative path `../src/scripts/renumberMigrations.ts
 | 2.5 | Non-.ts files in the migrations directory are skipped | Renumber logic |
 | 3.1 | Conflict markers in file → exit 1 | Edge cases |
 | 3.2 | Stale local develop (local-only, no remote) | Edge cases |
-| 3.3 | `git` not on PATH → exit 1 | Edge cases |
 | 3.4 | `git mv` fails mid-process → rollback + exit 1 | Edge cases |
 | 3.5 | Migration directory missing → exit 1 | Edge cases |
 | 3.6 | Non-standard filenames ignored in max-number calculation | Edge cases |

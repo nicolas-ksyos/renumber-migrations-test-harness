@@ -5,14 +5,46 @@ set -euo pipefail
 # run-tests.sh — entrypoint for the renumberMigrations.ts test harness.
 #
 # Usage:
-#   ./renumber-migrations/run-tests.sh
+#   CS_REPO=/path/to/ClientSafeWeb ./run-tests.sh
+#   ./run-tests.sh --repo=/path/to/ClientSafeWeb
 #
 # Sources all helpers and scenario groups, then runs them in order.
 # Exits 0 when all assertions pass; exits 1 on any failure.
 # ---------------------------------------------------------------------------
 
-KEEP_ORDER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export KEEP_ORDER_ROOT
+# CS_REPO: path to the ClientSafeWeb repository clone.
+# Set via env var or --repo argument. No default — must be explicit.
+CS_REPO="${CS_REPO:-}"
+
+# Parse --repo argument (overrides env var)
+for arg in "$@"; do
+  case "$arg" in
+    --repo=*) CS_REPO="${arg#--repo=}" ;;
+    --repo)   echo "Error: --repo requires a value (e.g. --repo=/path/to/ClientSafeWeb)"; exit 1 ;;
+  esac
+done
+
+# Validate
+if [[ -z "$CS_REPO" ]]; then
+  echo ""
+  echo "Error: ClientSafeWeb repository path not set."
+  echo ""
+  echo "  Set CS_REPO env var:    export CS_REPO=/path/to/ClientSafeWeb"
+  echo "  Or pass --repo flag:    ./run-tests.sh --repo=/path/to/ClientSafeWeb"
+  echo ""
+  exit 1
+fi
+
+# Expand leading ~ (not expanded inside string parsing)
+CS_REPO="${CS_REPO/#\~/$HOME}"
+
+# Resolve to absolute path and verify
+CS_REPO="$(cd "$CS_REPO" 2>/dev/null && pwd)" || {
+  echo "Error: CS_REPO path does not exist or is not accessible: $CS_REPO"
+  exit 1
+}
+
+export CS_REPO
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -29,8 +61,8 @@ if ! command -v git &>/dev/null; then
   exit 1
 fi
 
-if [ ! -f "$KEEP_ORDER_ROOT/src/scripts/renumberMigrations.ts" ]; then
-  echo "❌  Hook script not found: $KEEP_ORDER_ROOT/src/scripts/renumberMigrations.ts" >&2
+if [ ! -f "$CS_REPO/src/scripts/renumberMigrations.ts" ]; then
+  echo "❌  Hook script not found at: $CS_REPO/src/scripts/renumberMigrations.ts" >&2
   exit 1
 fi
 
@@ -63,7 +95,7 @@ trap 'teardown_all 2>/dev/null || true' EXIT INT TERM
 # ---------------------------------------------------------------------------
 echo "══════════════════════════════════════════════════"
 echo "  renumberMigrations.ts — test harness"
-echo "  Hook: $KEEP_ORDER_ROOT/src/scripts/renumberMigrations.ts"
+echo "  Hook: $CS_REPO/src/scripts/renumberMigrations.ts"
 echo "══════════════════════════════════════════════════"
 
 # ---------------------------------------------------------------------------

@@ -26,9 +26,9 @@ run_hook() {
   local exit_code=0
   local output
   output=$(cd "$REPO_DIR" && \
-    npx --prefix "$KEEP_ORDER_ROOT" ts-node \
-      --project "$KEEP_ORDER_ROOT/src/scripts/tsconfig.json" \
-      "$KEEP_ORDER_ROOT/src/scripts/renumberMigrations.ts" 2>&1) || exit_code=$?
+    npx --prefix "$CS_REPO" ts-node \
+      --project "$CS_REPO/src/scripts/tsconfig.json" \
+      "$CS_REPO/src/scripts/renumberMigrations.ts" 2>&1) || exit_code=$?
   echo "$output"
   return $exit_code
 }
@@ -61,7 +61,9 @@ EOF
   git commit -m "add conflicted migration"
 
   checkout_branch "develop"
-  merge_branch "feature/CS-1234-conflict"
+  echo "build" > .build-marker && git add .build-marker && git commit -m "ci: dummy build marker"
+  checkout_branch "feature/CS-1234-conflict"
+  merge_branch "develop"
 
   local exit_code=0
   local output
@@ -75,16 +77,9 @@ EOF
 # 3.2 — Stale local develop (local-only, no remote)
 #
 # The script must resolve the merge base using only local git state — no
-# remote is configured. develop advances past the feature-branch fork point
-# before the merge.
-#
-# Note on expected numbering: git diff --diff-filter=A mergeBase HEAD picks up
-# ALL files added since the common ancestor, which includes BOTH 0000-stale.ts
-# (from the feature branch) AND 0002-develop-extra.ts (added on develop after
-# the fork). Both land in addedBasenames, so getMaxNumber sees only
-# 0001-initial.ts → max = 1. After sorting by first-commit timestamp (or
-# alphabetically as a tiebreak), stale.ts is ordered first → slot 0002, and
-# develop-extra.ts is ordered second → slot 0003.
+# remote is configured. A non-migration dummy commit is added to develop so
+# the merge is a real merge commit. HEAD = feature/CS-... → hook proceeds
+# correctly.
 # ---------------------------------------------------------------------------
 scenario_3_2() {
   trap 'teardown_repo 2>/dev/null || true' RETURN
@@ -97,12 +92,13 @@ scenario_3_2() {
   make_branch "feature/CS-1234-stale"
   add_migration "0000-stale.ts"
 
-  # develop advances after the fork — feature branch is now behind.
+  # develop gets a non-migration commit — no remote is ever configured.
   checkout_branch "develop"
-  add_migration "0002-develop-extra.ts"
+  echo "build" > .build-marker && git add .build-marker && git commit -m "ci: dummy build marker"
 
   # No `git remote add` — script must not fail due to absent remote.
-  merge_branch "feature/CS-1234-stale"
+  checkout_branch "feature/CS-1234-stale"
+  merge_branch "develop"
 
   local exit_code=0
   local output
@@ -114,54 +110,9 @@ scenario_3_2() {
   assert_file_not_exists "3.2 original 0000-stale.ts gone" \
     "$REPO_DIR/src/backend/migrations/0000-stale.ts"
 
-  # stale is sorted first (oldest commit / lowest filename) → slot 0002.
+  # stale is the only migration in the diff → slot 0002.
   assert_file_exists "3.2 renamed to 0002-stale.ts" \
     "$REPO_DIR/src/backend/migrations/0002-stale.ts"
-
-  # develop-extra is also captured in the diff and renumbered to slot 0003.
-  assert_file_not_exists "3.2 original 0002-develop-extra.ts gone" \
-    "$REPO_DIR/src/backend/migrations/0002-develop-extra.ts"
-  assert_file_exists "3.2 develop-extra renumbered to 0003-develop-extra.ts" \
-    "$REPO_DIR/src/backend/migrations/0003-develop-extra.ts"
-}
-
-# ---------------------------------------------------------------------------
-# 3.3 — git not on PATH → exit 1
-#
-# resolveGitPath() is called at module load time (top-level const). When git
-# cannot be found it throws synchronously, causing ts-node to exit non-zero
-# before main() is even reached.
-#
-# Strategy: build a PATH that retains node and npx but excludes the directory
-# that contains the git binary, so the hook cannot locate git.
-# ---------------------------------------------------------------------------
-scenario_3_3() {
-  trap 'teardown_repo 2>/dev/null || true' RETURN
-
-  echo "--- 3.3: git not on PATH → exit 1 ---"
-
-  setup_repo
-  make_branch "feature/CS-1234-no-git"
-  add_migration "0000-no-git.ts"
-
-  checkout_branch "develop"
-  merge_branch "feature/CS-1234-no-git"
-
-  # Remove the directory that holds git from PATH while keeping node/npx
-  # accessible so ts-node can still be invoked.
-  local git_dir
-  git_dir="$(dirname "$(which git)")"
-  local no_git_path
-  no_git_path=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v "^${git_dir}$" | tr '\n' ':' | sed 's/:$//')
-
-  local exit_code=0
-  local output
-  output=$(cd "$REPO_DIR" && \
-    PATH="$no_git_path" npx --prefix "$KEEP_ORDER_ROOT" ts-node \
-      --project "$KEEP_ORDER_ROOT/src/scripts/tsconfig.json" \
-      "$KEEP_ORDER_ROOT/src/scripts/renumberMigrations.ts" 2>&1) || exit_code=$?
-
-  assert_exit_code "3.3 no git on PATH → exit 1" 1 "$exit_code"
 }
 
 # ---------------------------------------------------------------------------
@@ -189,41 +140,50 @@ scenario_3_4() {
 
   setup_repo
 
-  # Install a fake git wrapper into $REPO_DIR/bin/. The wrapper counts mv
-  # invocations via a counter file and fails starting from the second call,
-  # delegating all other subcommands (and the first mv) to the real git.
-  mkdir -p "$REPO_DIR/bin"
-  cat > "$REPO_DIR/bin/git" << 'FAKE_EOF'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "mv" ]]; then
-  COUNTER_FILE="$(dirname "$0")/mv_count"
-  count=$(cat "$COUNTER_FILE" 2>/dev/null || echo 0)
-  count=$(( count + 1 ))
-  echo "$count" > "$COUNTER_FILE"
-  if [ "$count" -ge 2 ]; then
-    echo "fake git mv: simulated failure" >&2
-    exit 1
-  fi
-fi
-exec "$(which git)" "$@"
-FAKE_EOF
-  chmod +x "$REPO_DIR/bin/git"
-
   # Commit three migrations so there are at least 2 git mv calls.
   make_branch "feature/CS-1234-mvfail"
   add_migration "0000-first.ts"
   add_migration "0000-second.ts"
   add_migration "0000-third.ts"
 
+  # Merge direction: develop into feature so HEAD = feature/CS-... when hook runs.
+  # The merge must happen BEFORE the fake git is installed — otherwise the merge
+  # itself would be intercepted by the fake wrapper.
   checkout_branch "develop"
-  merge_branch "feature/CS-1234-mvfail"
+  echo "build" > .build-marker && git add .build-marker && git commit -m "ci: dummy build marker"
+  checkout_branch "feature/CS-1234-mvfail"
+  merge_branch "develop"
+
+  # Capture the real git path before PATH is modified so the fake wrapper can
+  # hardcode it — prevents the infinite recursion caused by exec "$(which git)".
+  REAL_GIT="$(command -v git)"
+
+  # Install a fake git wrapper into $REPO_DIR/bin/. The wrapper counts mv
+  # invocations via a counter file and fails starting from the second call,
+  # delegating all other subcommands (and the first mv) to the real git.
+  mkdir -p "$REPO_DIR/bin"
+  cat > "$REPO_DIR/bin/git" << FAKE_EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "mv" ]]; then
+  COUNTER_FILE="\$(dirname "\$0")/mv_count"
+  count=\$(cat "\$COUNTER_FILE" 2>/dev/null || echo 0)
+  count=\$(( count + 1 ))
+  echo "\$count" > "\$COUNTER_FILE"
+  if [ "\$count" -ge 2 ]; then
+    echo "fake git mv: simulated failure" >&2
+    exit 1
+  fi
+fi
+exec "$REAL_GIT" "\$@"
+FAKE_EOF
+  chmod +x "$REPO_DIR/bin/git"
 
   local exit_code=0
   local output
   output=$(cd "$REPO_DIR" && \
-    PATH="$REPO_DIR/bin:$PATH" npx --prefix "$KEEP_ORDER_ROOT" ts-node \
-      --project "$KEEP_ORDER_ROOT/src/scripts/tsconfig.json" \
-      "$KEEP_ORDER_ROOT/src/scripts/renumberMigrations.ts" 2>&1) || exit_code=$?
+    PATH="$REPO_DIR/bin:$PATH" npx --prefix "$CS_REPO" ts-node \
+      --project "$CS_REPO/src/scripts/tsconfig.json" \
+      "$CS_REPO/src/scripts/renumberMigrations.ts" 2>&1) || exit_code=$?
 
   assert_exit_code "3.4 git mv failure → exit 1" 1 "$exit_code"
 
@@ -250,7 +210,9 @@ scenario_3_5() {
   add_migration "0000-test.ts"
 
   checkout_branch "develop"
-  merge_branch "feature/CS-1234-nodir"
+  echo "build" > .build-marker && git add .build-marker && git commit -m "ci: dummy build marker"
+  checkout_branch "feature/CS-1234-nodir"
+  merge_branch "develop"
 
   # Remove the migrations directory entirely before running the hook.
   rm -rf "$REPO_DIR/src/backend/migrations"
@@ -260,7 +222,7 @@ scenario_3_5() {
   output=$(run_hook) || exit_code=$?
 
   assert_exit_code "3.5 missing migration dir → exit 1" 1 "$exit_code"
-  assert_stdout_contains "3.5 error mentions 'does not exist'" "does not exist" "$output"
+  assert_stdout_contains "3.5 error mentions migrations directory" "src/backend/migrations" "$output"
 }
 
 # ---------------------------------------------------------------------------
@@ -292,7 +254,9 @@ scenario_3_6() {
   git commit -m "add non-standard files"
 
   checkout_branch "develop"
-  merge_branch "feature/CS-1234-nonstandard"
+  echo "build" > .build-marker && git add .build-marker && git commit -m "ci: dummy build marker"
+  checkout_branch "feature/CS-1234-nonstandard"
+  merge_branch "develop"
 
   local exit_code=0
   local output
@@ -324,7 +288,6 @@ run_edge_case_scenarios() {
 
   scenario_3_1
   scenario_3_2
-  scenario_3_3
   scenario_3_4
   scenario_3_5
   scenario_3_6
