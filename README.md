@@ -116,6 +116,7 @@ renumber-migrations/
 
 1. **Choose the right file.** Pick the scenario file whose category matches your test, or create `05-<category>.sh` for a new category.
 2. **Write the function.** Follow the existing pattern — `trap 'teardown_repo 2>/dev/null || true' RETURN` at the top, then `setup_repo`, arrange state, invoke the hook, assert, done.
+
    ```bash
    scenario_2_6() {
      trap 'teardown_repo 2>/dev/null || true' RETURN
@@ -128,6 +129,7 @@ renumber-migrations/
      assert_exit_code "2.6 <label>" 0 "$exit_code"
    }
    ```
+
 3. **Register it.** Add `scenario_2_6` inside the category's `run_*_scenarios()` function.
 4. **New category file only:** `source` the new file in `run-tests.sh` and call its `run_*_scenarios` entry-point alongside the others.
 
@@ -161,3 +163,4 @@ This is a fully standalone repository at `~/repos/renumber-migrations/`. It has 
 | 4.1 | `master` → `develop` local merge (no-op: CS guard fires) | Merge strategies |
 | 4.2 | `release/*` → `develop` local merge (no-op: CS guard fires) | Merge strategies |
 | 4.3 | `feature/CS-*` → `feature/CS-*` local merge (rename executes) | Merge strategies |
+| 4.4 | `develop`→`feature/CS-*` merge with number collision — only feature migration renumbered | Merge strategies |
